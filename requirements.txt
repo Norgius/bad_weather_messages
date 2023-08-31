@@ -1,0 +1,4 @@
+environs==9.5.*
+asks==3.*
+trio-websocket==0.10.*
+asyncclick==8.1.3.*
