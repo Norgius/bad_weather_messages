@@ -1,59 +1,83 @@
-import re
+from contextvars import ContextVar
 
 import asks
-import trio
 import asyncclick as click
 from environs import Env
 
+from exceptions import SmscApiError
 
-ID_MESSAGE_PATTERN = '[\d]{9}'
+smsc_login: ContextVar[str] = ContextVar('smsc_login')
+smsc_password: ContextVar[str] = ContextVar('smsc_password')
+
+CHARSET = 'utf-8'
+HTTP_METHODS = ['GET', 'POST']
+API_METHODS = ['send', 'status']
 
 
-async def get_status_message(smtp_login, smtp_password, emails, message_id):
-    url = 'https://smsc.ru/sys/status.php'
-    params = {
-        'login': smtp_login,
-        'psw': smtp_password,
-        'phone': emails,
-        'id': message_id,
-        'fmt': 3,
+async def request_smsc(
+    http_method: str,
+    api_method: str,
+    *,
+    payload: dict = {}
+) -> dict:
+    if http_method not in HTTP_METHODS or api_method not in API_METHODS:
+        raise SmscApiError
+    if api_method == 'send' and not payload.get('phones', False):
+        raise SmscApiError
+    url = f'https://smsc.ru/sys/{api_method}.php'
+
+    basic_payload = {
+        'login': smsc_login.get(),
+        'psw': smsc_password.get(),
+        'charset': CHARSET,
+        'fmt': 3
     }
-    response = await asks.get(url, params=params)
-    print(response.json())
+    payload.update(basic_payload)
+
+    if api_method == 'POST':
+        response = await asks.request(http_method, url, data=payload)
+    else:
+        response = await asks.request(http_method, url, params=payload)
+    response = response.json()
+    if 'error' in response:
+        raise SmscApiError
+    return response
 
 
 @click.command()
 async def main():
     env = Env()
     env.read_env()
-    url = 'https://smsc.ru/sys/send.php'
 
-    smtp_login = env.str('SMTP_LOGIN')
-    smtp_password  = env.str('SMTP_PASSWORD')
+    smsc_login.set(env.str('SMTP_LOGIN'))
+    smsc_password.set(env.str('SMTP_PASSWORD'))
     emails = env.list('EMAILS')
     sender = env.str('SENDER')
     message_subject = env.str('MESSAGE_SUBJECT', 'Погода')
     message_life_span = env.int('MESSAGE_LIFE_SPAN', 1)
     text_message = env.str('MESSAGE_TEXT', 'Сегодня будет гроза.')
 
-    emails = ';'.join(emails)
-    params = {
-        'login': smtp_login,
-        'psw': smtp_password,
-        'phones': emails,
+    payload = {
+        'phones': ','.join(emails),
         'mes': text_message,
         'subj': message_subject,
         'sender': sender,
         'mail': 1,
         'valid': message_life_span,
     }
+    try:
+        response = await request_smsc('POST', 'send', payload=payload)
+        print(response)
+        message_id = f'{response.get("id")},' * response.get("cnt")
+        payload = {
+            'phone': ','.join(emails),
+            'id': message_id,
+        }
+        response = await request_smsc('GET', 'status', payload=payload)
+        print(response)
 
-    response = await asks.get(url, params=params)
-    print(response.text)
-    message_id = re.search(ID_MESSAGE_PATTERN, response.text)
-    if message_id:
-        message_id = message_id.group(0)
-        await get_status_message(smtp_login, smtp_password, emails, message_id)
+    except SmscApiError:
+        print('Возникла ошибка')
 
 
 if __name__ == '__main__':
