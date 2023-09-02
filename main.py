@@ -1,4 +1,5 @@
 from contextvars import ContextVar
+from unittest.mock import patch
 
 import asks
 import asyncclick as click
@@ -66,14 +67,24 @@ async def main():
         'valid': message_life_span,
     }
     try:
-        response = await request_smsc('POST', 'send', payload=payload)
+        with patch('__main__.request_smsc') as mock_request_smsc:
+            mock_request_smsc.return_value = {'id': 104160267, 'cnt': 1}
+            response = await request_smsc('POST', 'send', payload=payload)
         print(response)
         message_id = f'{response.get("id")},' * response.get("cnt")
         payload = {
             'phone': ','.join(emails),
             'id': message_id,
         }
-        response = await request_smsc('GET', 'status', payload=payload)
+
+        with patch('__main__.request_smsc') as mock_request_smsc:
+            mock_request_smsc.return_value = {
+                'status': 0,
+                'last_date': '01.09.2023 14:39:01',
+                'last_timestamp': 1693568341,
+                'flag': 40
+            }
+            response = await request_smsc('GET', 'status', payload=payload)
         print(response)
 
     except SmscApiError:
