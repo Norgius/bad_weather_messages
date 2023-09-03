@@ -1,14 +1,10 @@
-from contextvars import ContextVar
 from unittest.mock import patch
 
 import asks
-import asyncclick as click
 from environs import Env
 
 from exceptions import SmscApiError
 
-smsc_login: ContextVar[str] = ContextVar('smsc_login')
-smsc_password: ContextVar[str] = ContextVar('smsc_password')
 
 CHARSET = 'utf-8'
 HTTP_METHODS = ['GET', 'POST']
@@ -19,39 +15,36 @@ async def request_smsc(
     http_method: str,
     api_method: str,
     *,
+    login: str,
+    password: str,
     payload: dict = {}
 ) -> dict:
-    if http_method not in HTTP_METHODS or api_method not in API_METHODS:
-        raise SmscApiError
-    if api_method == 'send' and not payload.get('phones', False):
-        raise SmscApiError
     url = f'https://smsc.ru/sys/{api_method}.php'
 
     basic_payload = {
-        'login': smsc_login.get(),
-        'psw': smsc_password.get(),
+        'login': login,
+        'psw': password,
         'charset': CHARSET,
         'fmt': 3
     }
     payload.update(basic_payload)
-
     if api_method == 'POST':
         response = await asks.request(http_method, url, data=payload)
     else:
         response = await asks.request(http_method, url, params=payload)
+
+    if response.reason_phrase != 'OK':
+        raise SmscApiError(f'Получен код ошибки: "{response.status_code} {response.text}"')
     response = response.json()
     if 'error' in response:
-        raise SmscApiError
+        raise SmscApiError(f'Получена ошибка от api SMSC.ru: "{response["error"]}"')
     return response
 
 
-@click.command()
 async def main():
     env = Env()
     env.read_env()
 
-    smsc_login.set(env.str('SMTP_LOGIN'))
-    smsc_password.set(env.str('SMTP_PASSWORD'))
     emails = env.list('EMAILS')
     sender = env.str('SENDER')
     message_subject = env.str('MESSAGE_SUBJECT', 'Погода')
@@ -89,7 +82,3 @@ async def main():
 
     except SmscApiError:
         print('Возникла ошибка')
-
-
-if __name__ == '__main__':
-    main(_anyio_backend='trio')
