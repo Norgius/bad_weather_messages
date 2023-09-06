@@ -5,10 +5,7 @@ from environs import Env
 
 from exceptions import SmscApiError
 
-
 CHARSET = 'utf-8'
-HTTP_METHODS = ['GET', 'POST']
-API_METHODS = ['send', 'status']
 
 
 async def request_smsc(
