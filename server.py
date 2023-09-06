@@ -1,4 +1,5 @@
 import warnings
+from operator import itemgetter
 from contextvars import ContextVar
 
 import trio
@@ -92,24 +93,25 @@ async def create_message():
 
 @app.websocket('/ws')
 async def ws():
-    for i in range(100):
+    db = app.db_pool
+    while True:
+        all_message_ids = await trio_asyncio.aio_as_trio(db.list_sms_mailings())
+        all_sms_mailings = await trio_asyncio.aio_as_trio(
+            db.get_sms_mailings(*all_message_ids)
+        )
+        if not all_sms_mailings:
+            break
+        all_sms_mailings.sort(key=itemgetter('created_at'), reverse=True)
+
         await websocket.send_json({
             "msgType": "SMSMailingStatus",
             "SMSMailings": [
                 {
-                    "timestamp": 1123131392.734,
-                    "SMSText": "Сегодня гроза! Будьте осторожны!",
-                    "mailingId": "1",
+                    "timestamp": all_sms_mailings[0]['created_at'],
+                    "SMSText": all_sms_mailings[0]['text'],
+                    "mailingId": str(all_sms_mailings[0]['sms_id']),
                     "totalSMSAmount": 345,
-                    "deliveredSMSAmount": int(345 * (i/100)),
-                    "failedSMSAmount": 5,
-                },
-                {
-                    "timestamp": 1323141112.924422,
-                    "SMSText": "Новогодняя акция!!! Приходи в магазин и получи скидку!!!",
-                    "mailingId": "new-year",
-                    "totalSMSAmount": 3993,
-                    "deliveredSMSAmount": int(3993 * (i/100)),
+                    "deliveredSMSAmount": 0,
                     "failedSMSAmount": 0,
                 },
             ]
